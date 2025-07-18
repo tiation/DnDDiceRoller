@@ -1,7 +1,34 @@
 {
-  "name": "dnddiceroller",
+  "name": "dnddiceroller-android",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "description": "A comprehensive, enterprise-grade D&D dice rolling application for Android with dark neon theme and user authentication",
+  "keywords": [
+    "dnd",
+    "dungeons-and-dragons",
+    "dice-roller",
+    "android",
+    "react-native",
+    "expo",
+    "gaming",
+    "tabletop",
+    "rpg",
+    "tiation"
+  ],
+  "author": {
+    "name": "Tiation",
+    "email": "contact@tiation.com",
+    "url": "https://github.com/tiation"
+  },
+  "license": "MIT",
+  "homepage": "https://tiation.github.io/dnddiceroller-android",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tiation/dnddiceroller-android.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tiation/dnddiceroller-android/issues"
+  },
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
