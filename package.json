@@ -21,13 +21,13 @@
     "url": "https://github.com/tiation"
   },
   "license": "MIT",
-  "homepage": "https://tiation.github.io/dnddiceroller-android",
+  "homepage": "https://tiation.github.io/DnDDiceRoller",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tiation/dnddiceroller-android.git"
+    "url": "https://github.com/tiation/DnDDiceRoller.git"
   },
   "bugs": {
-    "url": "https://github.com/tiation/dnddiceroller-android/issues"
+    "url": "https://github.com/tiation/DnDDiceRoller/issues"
   },
   "scripts": {
     "start": "expo start",
