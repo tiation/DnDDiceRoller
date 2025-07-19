@@ -19,6 +19,7 @@ const DiceRollerScreen = ({ navigation }) => {
   const [diceLines, setDiceLines] = useState([]);
   const [rollHistory, setRollHistory] = useState([]);
   const [fadeAnim] = useState(new Animated.Value(0));
+  const [customExpression, setCustomExpression] = useState('');
 
   useEffect(() => {
     loadUserData();
@@ -49,6 +50,10 @@ const DiceRollerScreen = ({ navigation }) => {
       diceCount: 1,
       diceType: 20,
       modifier: 0,
+      advantage: false,
+      disadvantage: false,
+      exploding: false,
+      operation: 'add', // 'add', 'subtract'
       result: null,
     };
     setDiceLines([newLine]);
@@ -61,6 +66,10 @@ const DiceRollerScreen = ({ navigation }) => {
       diceCount: 1,
       diceType: 20,
       modifier: 0,
+      advantage: false,
+      disadvantage: false,
+      exploding: false,
+      operation: 'add',
       result: null,
     };
     setDiceLines([...diceLines, newLine]);
@@ -76,31 +85,99 @@ const DiceRollerScreen = ({ navigation }) => {
     ));
   };
 
-  const rollDice = (sides) => {
-    return Math.floor(Math.random() * sides) + 1;
+  const rollDice = (sides, exploding = false) => {
+    let roll = Math.floor(Math.random() * sides) + 1;
+    let rolls = [roll];
+    
+    // Handle exploding dice (keep rolling on max value)
+    if (exploding && roll === sides) {
+      let nextRoll = rollDice(sides, exploding);
+      if (Array.isArray(nextRoll)) {
+        rolls = rolls.concat(nextRoll);
+      } else {
+        rolls.push(nextRoll);
+      }
+    }
+    
+    return exploding ? rolls.flat() : roll;
+  };
+
+  const rollWithAdvantage = (sides, count) => {
+    const rolls = [];
+    for (let i = 0; i < count; i++) {
+      const roll1 = rollDice(sides);
+      const roll2 = rollDice(sides);
+      rolls.push({ roll1, roll2, result: Math.max(roll1, roll2), type: 'advantage' });
+    }
+    return rolls;
+  };
+
+  const rollWithDisadvantage = (sides, count) => {
+    const rolls = [];
+    for (let i = 0; i < count; i++) {
+      const roll1 = rollDice(sides);
+      const roll2 = rollDice(sides);
+      rolls.push({ roll1, roll2, result: Math.min(roll1, roll2), type: 'disadvantage' });
+    }
+    return rolls;
   };
 
   const rollDiceLine = (line) => {
-    const rolls = [];
-    for (let i = 0; i < line.diceCount; i++) {
-      rolls.push(rollDice(line.diceType));
+    let rolls = [];
+    let rollDetails = [];
+
+    if (line.advantage) {
+      rollDetails = rollWithAdvantage(line.diceType, line.diceCount);
+      rolls = rollDetails.map(r => r.result);
+    } else if (line.disadvantage) {
+      rollDetails = rollWithDisadvantage(line.diceType, line.diceCount);
+      rolls = rollDetails.map(r => r.result);
+    } else {
+      for (let i = 0; i < line.diceCount; i++) {
+        const roll = rollDice(line.diceType, line.exploding);
+        if (line.exploding && Array.isArray(roll)) {
+          rolls.push(roll.reduce((sum, r) => sum + r, 0));
+          rollDetails.push({ exploding: roll, result: roll.reduce((sum, r) => sum + r, 0) });
+        } else {
+          rolls.push(roll);
+          rollDetails.push({ normal: roll, result: roll });
+        }
+      }
     }
     
-    const total = rolls.reduce((sum, roll) => sum + roll, 0) + line.modifier;
+    let total = rolls.reduce((sum, roll) => sum + roll, 0) + line.modifier;
+    
+    // Apply operation (add/subtract) - this affects the total when combining with other dice lines
+    if (line.operation === 'subtract') {
+      total = -total + (line.modifier * 2); // Correct for modifier being applied twice
+    }
+    
     const result = {
       rolls,
+      rollDetails,
       total,
+      rawTotal: rolls.reduce((sum, roll) => sum + roll, 0) + line.modifier,
       modifier: line.modifier,
+      advantage: line.advantage,
+      disadvantage: line.disadvantage,
+      exploding: line.exploding,
+      operation: line.operation,
       timestamp: new Date().toLocaleTimeString(),
     };
 
     updateDiceLine(line.id, 'result', result);
     
     // Add to history
+    let diceNotation = `${line.operation === 'subtract' ? '-' : ''}${line.diceCount}d${line.diceType}`;
+    if (line.advantage) diceNotation += ' (ADV)';
+    if (line.disadvantage) diceNotation += ' (DIS)';
+    if (line.exploding) diceNotation += '!';
+    if (line.modifier !== 0) diceNotation += (line.modifier > 0 ? '+' : '') + line.modifier;
+    
     const historyEntry = {
       id: Date.now(),
       label: line.label,
-      dice: `${line.diceCount}d${line.diceType}${line.modifier !== 0 ? (line.modifier > 0 ? '+' : '') + line.modifier : ''}`,
+      dice: diceNotation,
       result: result,
     };
     setRollHistory(prev => [historyEntry, ...prev.slice(0, 19)]); // Keep last 20 rolls
@@ -108,6 +185,50 @@ const DiceRollerScreen = ({ navigation }) => {
 
   const rollAllDice = () => {
     diceLines.forEach(line => rollDiceLine(line));
+  };
+
+  const getCombinedTotal = () => {
+    return diceLines
+      .filter(line => line.result)
+      .reduce((total, line) => total + line.result.total, 0);
+  };
+
+  const parseCustomExpression = (expression) => {
+    // Parse expressions like "3d6+2d4-1d8+5"
+    const parts = expression.match(/([+-]?)(\d+)d(\d+)([+-]\d+)?/g);
+    if (!parts) return null;
+
+    const parsedDice = parts.map((part, index) => {
+      const match = part.match(/([+-]?)(\d+)d(\d+)([+-]\d+)?/);
+      if (!match) return null;
+
+      const [, sign, count, sides, modifier] = match;
+      return {
+        id: Date.now() + index,
+        label: `Custom ${index + 1}`,
+        diceCount: parseInt(count),
+        diceType: parseInt(sides),
+        modifier: modifier ? parseInt(modifier) : 0,
+        operation: sign === '-' ? 'subtract' : 'add',
+        advantage: false,
+        disadvantage: false,
+        exploding: false,
+        result: null,
+      };
+    }).filter(Boolean);
+
+    return parsedDice;
+  };
+
+  const rollCustomExpression = () => {
+    const parsedDice = parseCustomExpression(customExpression);
+    if (!parsedDice) {
+      Alert.alert('Invalid Expression', 'Please enter a valid dice expression (e.g., 3d6+2d4-1d8)');
+      return;
+    }
+
+    setDiceLines(parsedDice);
+    parsedDice.forEach(line => rollDiceLine(line));
   };
 
   const clearHistory = () => {
@@ -195,6 +316,86 @@ const DiceRollerScreen = ({ navigation }) => {
             placeholderTextColor="#666"
           />
         </View>
+
+        <View style={styles.controlGroup}>
+          <Text style={styles.controlLabel}>Operation</Text>
+          <View style={styles.operationContainer}>
+            <TouchableOpacity
+              style={[
+                styles.operationButton,
+                item.operation === 'add' && styles.selectedOperation
+              ]}
+              onPress={() => updateDiceLine(item.id, 'operation', 'add')}
+            >
+              <Text style={[
+                styles.operationText,
+                item.operation === 'add' && styles.selectedOperationText
+              ]}>+</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.operationButton,
+                item.operation === 'subtract' && styles.selectedOperation
+              ]}
+              onPress={() => updateDiceLine(item.id, 'operation', 'subtract')}
+            >
+              <Text style={[
+                styles.operationText,
+                item.operation === 'subtract' && styles.selectedOperationText
+              ]}>-</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.controlGroup}>
+          <Text style={styles.controlLabel}>Special Rolls</Text>
+          <View style={styles.specialRollsContainer}>
+            <TouchableOpacity
+              style={[
+                styles.specialButton,
+                item.advantage && styles.selectedSpecial
+              ]}
+              onPress={() => {
+                updateDiceLine(item.id, 'advantage', !item.advantage);
+                if (!item.advantage) updateDiceLine(item.id, 'disadvantage', false);
+              }}
+            >
+              <Text style={[
+                styles.specialText,
+                item.advantage && styles.selectedSpecialText
+              ]}>ADV</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.specialButton,
+                item.disadvantage && styles.selectedSpecial
+              ]}
+              onPress={() => {
+                updateDiceLine(item.id, 'disadvantage', !item.disadvantage);
+                if (!item.disadvantage) updateDiceLine(item.id, 'advantage', false);
+              }}
+            >
+              <Text style={[
+                styles.specialText,
+                item.disadvantage && styles.selectedSpecialText
+              ]}>DIS</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.specialButton,
+                item.exploding && styles.selectedSpecial
+              ]}
+              onPress={() => updateDiceLine(item.id, 'exploding', !item.exploding)}
+            >
+              <Text style={[
+                styles.specialText,
+                item.exploding && styles.selectedSpecialText
+              ]}>EXP!</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
       <TouchableOpacity
@@ -211,11 +412,28 @@ const DiceRollerScreen = ({ navigation }) => {
 
       {item.result && (
         <View style={styles.resultContainer}>
-          <Text style={styles.resultText}>
-            Rolls: {item.result.rolls.join(', ')}
-          </Text>
-          <Text style={styles.totalText}>
-            Total: {item.result.total}
+          {item.result.advantage && (
+            <Text style={styles.advantageText}>
+              Advantage: {item.result.rollDetails.map((r, i) => `[${r.roll1}, ${r.roll2}] → ${r.result}`).join(', ')}
+            </Text>
+          )}
+          {item.result.disadvantage && (
+            <Text style={styles.disadvantageText}>
+              Disadvantage: {item.result.rollDetails.map((r, i) => `[${r.roll1}, ${r.roll2}] → ${r.result}`).join(', ')}
+            </Text>
+          )}
+          {item.result.exploding && (
+            <Text style={styles.explodingText}>
+              Exploding: {item.result.rollDetails.map((r, i) => r.exploding ? `[${r.exploding.join(', ')}] = ${r.result}` : r.result).join(', ')}
+            </Text>
+          )}
+          {!item.result.advantage && !item.result.disadvantage && !item.result.exploding && (
+            <Text style={styles.resultText}>
+              Rolls: {item.result.rolls.join(', ')}
+            </Text>
+          )}
+          <Text style={[styles.totalText, item.operation === 'subtract' && styles.subtractTotal]}>
+            {item.operation === 'subtract' ? 'Subtract: ' : 'Total: '}{Math.abs(item.result.rawTotal)}
           </Text>
         </View>
       )}
@@ -246,6 +464,32 @@ const DiceRollerScreen = ({ navigation }) => {
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Custom Expression Section */}
+          <View style={styles.customSection}>
+            <Text style={styles.sectionTitle}>Quick Expression</Text>
+            <View style={styles.customExpressionContainer}>
+              <TextInput
+                style={styles.customInput}
+                value={customExpression}
+                onChangeText={setCustomExpression}
+                placeholder="e.g., 3d6+2d4-1d8+5"
+                placeholderTextColor="#666"
+              />
+              <TouchableOpacity style={styles.customRollButton} onPress={rollCustomExpression}>
+                <Text style={styles.customRollText}>Roll</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Combined Total Display */}
+          {diceLines.some(line => line.result) && (
+            <View style={styles.combinedTotalContainer}>
+              <Text style={styles.combinedTotalText}>
+                Combined Total: {getCombinedTotal()}
+              </Text>
+            </View>
+          )}
 
           {/* Dice Rolling Section */}
           <View style={styles.section}>
@@ -542,6 +786,121 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 10,
     textAlign: 'right',
+  },
+  customSection: {
+    marginBottom: 20,
+  },
+  customExpressionContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  customInput: {
+    flex: 1,
+    backgroundColor: 'rgba(20, 20, 40, 0.8)',
+    color: '#ffffff',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#00ffff',
+    fontSize: 16,
+  },
+  customRollButton: {
+    backgroundColor: '#ff00ff',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  customRollText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  combinedTotalContainer: {
+    backgroundColor: 'rgba(0, 255, 255, 0.2)',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: '#00ffff',
+    alignItems: 'center',
+  },
+  combinedTotalText: {
+    color: '#00ffff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textShadowColor: '#00ffff',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 5,
+  },
+  operationContainer: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  operationButton: {
+    backgroundColor: 'rgba(10, 10, 30, 0.8)',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#555',
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  selectedOperation: {
+    backgroundColor: '#ff00ff',
+    borderColor: '#ff00ff',
+  },
+  operationText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  selectedOperationText: {
+    color: '#ffffff',
+  },
+  specialRollsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  specialButton: {
+    backgroundColor: 'rgba(10, 10, 30, 0.8)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#555',
+  },
+  selectedSpecial: {
+    backgroundColor: '#00ffff',
+    borderColor: '#00ffff',
+  },
+  specialText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  selectedSpecialText: {
+    color: '#000000',
+  },
+  advantageText: {
+    color: '#00ff00',
+    fontSize: 14,
+    marginBottom: 5,
+  },
+  disadvantageText: {
+    color: '#ffaa00',
+    fontSize: 14,
+    marginBottom: 5,
+  },
+  explodingText: {
+    color: '#ff6600',
+    fontSize: 14,
+    marginBottom: 5,
+  },
+  subtractTotal: {
+    color: '#ff6666',
   },
 });
 
